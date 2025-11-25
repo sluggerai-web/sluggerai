@@ -18,8 +18,8 @@ st.set_page_config(page_title="SluggerAI: Biomechanics Lab", layout="wide", page
 # ---------------------------------------------------------
 # 🔒 SECURITY WARNING: PUT YOUR KEYS HERE AGAIN
 # ---------------------------------------------------------
-stripe.api_key = "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" 
-PRO_PRICE_ID = "price_1SWR4iLfYK5wKxPUZUgxflYN"           
+stripe.api_key = "" 
+PRO_PRICE_ID = ""           
 # ---------------------------------------------------------
 
 # --- CSS STYLING ---
