@@ -4,7 +4,7 @@ on:
   push:
     branches: [ fitness-command-center-v1-1-build ]
     paths:
-      - 'fitness-android-source.zip'
+      - 'fitness-source-parts/**'
       - '.github/workflows/fitness-android-build.yml'
   workflow_dispatch:
 
@@ -24,8 +24,11 @@ jobs:
       - uses: android-actions/setup-android@v3
       - name: Install Android SDK
         run: yes | sdkmanager 'platforms;android-36' 'build-tools;35.0.0' || true
-      - name: Unpack source
+      - name: Reconstruct and unpack source
         run: |
+          cat fitness-source-parts/part-* > fitness-source.b64
+          base64 -d fitness-source.b64 > fitness-android-source.zip
+          unzip -t fitness-android-source.zip
           rm -rf fitness-android
           mkdir fitness-android
           unzip -q fitness-android-source.zip -d fitness-android
