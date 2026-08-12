@@ -1,10 +1,11 @@
-name: Build Fitness Command Center v1.1
+name: Build Fitness Command Center v1.1.1
 
 on:
   push:
     branches: [ fitness-command-center-v1-1-build ]
     paths:
       - 'fitness-source-parts/**'
+      - 'fitness-signing-key.b64'
       - '.github/workflows/fitness-android-build.yml'
   workflow_dispatch:
 
@@ -24,52 +25,111 @@ jobs:
       - uses: android-actions/setup-android@v3
       - name: Install Android SDK
         run: yes | sdkmanager 'platforms;android-36' 'build-tools;35.0.0' || true
-      - name: Reconstruct and unpack source
+      - name: Reconstruct source and apply v1.1.1 fixes
+        shell: bash
         run: |
+          set -euo pipefail
           cat fitness-source-parts/part-* > fitness-source.b64
           base64 -d fitness-source.b64 > fitness-android-source.zip
           unzip -t fitness-android-source.zip
           rm -rf fitness-android
           mkdir fitness-android
           unzip -q fitness-android-source.zip -d fitness-android
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          # Version bump so Android accepts this as an update over v1.1.0.
+          p=Path('fitness-android/app/build.gradle')
+          s=p.read_text()
+          s=s.replace('versionCode 4','versionCode 5')
+          s=s.replace("versionName '1.1.0'","versionName '1.1.1'")
+          p.write_text(s)
+
+          # Progress tab bug: v1.1 wrapped weeklyReport() but forgot to save
+          # the original function, producing ReferenceError: oldWeeklyReport is not defined.
+          p=Path('fitness-android/app/src/main/assets/addon.js')
+          s=p.read_text()
+          needle='  const oldRenderSettings=renderSettings;\n  const oldCurrentWeight=currentWeight;'
+          replacement='  const oldRenderSettings=renderSettings;\n  const oldWeeklyReport=weeklyReport;\n  const oldCurrentWeight=currentWeight;'
+          if needle not in s and 'const oldWeeklyReport=weeklyReport;' not in s:
+              raise SystemExit('Could not locate progress-tab patch point')
+          s=s.replace(needle,replacement)
+          p.write_text(s)
+
+          # Add launcher icon references to the application manifest.
+          p=Path('fitness-android/app/src/main/AndroidManifest.xml')
+          s=p.read_text()
+          if 'android:icon=' not in s:
+              s=s.replace(
+                  'android:label="Fitness Command Center"\n        android:theme="@style/AppTheme">',
+                  'android:label="Fitness Command Center"\n        android:icon="@mipmap/ic_launcher"\n        android:roundIcon="@mipmap/ic_launcher_round"\n        android:theme="@style/AppTheme">'
+              )
+          p.write_text(s)
+          PY
+
+          mkdir -p fitness-android/app/src/main/res/drawable \
+                   fitness-android/app/src/main/res/mipmap-anydpi \
+                   fitness-android/app/src/main/res/mipmap-anydpi-v26
+
+          cat > fitness-android/app/src/main/res/values/colors.xml <<'EOF'
+          <resources>
+              <color name="launcher_background">#0B1F33</color>
+          </resources>
+          EOF
+
+          cat > fitness-android/app/src/main/res/drawable/ic_launcher_foreground.xml <<'EOF'
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp" android:height="108dp"
+              android:viewportWidth="108" android:viewportHeight="108">
+              <path android:fillColor="#1F7A8C" android:pathData="M54,18A36,36 0,1 0,54 90A36,36 0,1 0,54 18M54,27A27,27 0,1 1,54 81A27,27 0,1 1,54 27"/>
+              <path android:fillColor="#FFFFFF" android:pathData="M24,49H30V59H24ZM32,44H38V64H32ZM40,51H68V57H40ZM70,44H76V64H70ZM78,49H84V59H78Z"/>
+              <path android:fillColor="#D4AF37" android:pathData="M43,37L50,51L55,41L61,55L66,46L70,46L61,65L55,51L50,61L39,37Z"/>
+          </vector>
+          EOF
+
+          cp fitness-android/app/src/main/res/drawable/ic_launcher_foreground.xml fitness-android/app/src/main/res/mipmap-anydpi/ic_launcher.xml
+          cp fitness-android/app/src/main/res/drawable/ic_launcher_foreground.xml fitness-android/app/src/main/res/mipmap-anydpi/ic_launcher_round.xml
+
+          cat > fitness-android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml <<'EOF'
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@color/launcher_background" />
+              <foreground android:drawable="@drawable/ic_launcher_foreground" />
+          </adaptive-icon>
+          EOF
+          cp fitness-android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml fitness-android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
+
+          grep -n 'oldWeeklyReport' fitness-android/app/src/main/assets/addon.js
+          grep -n 'versionCode\|versionName' fitness-android/app/build.gradle
+          grep -n 'android:icon\|android:roundIcon' fitness-android/app/src/main/AndroidManifest.xml
+
       - name: Build unsigned release
         working-directory: fitness-android
         run: gradle --no-daemon clean assembleRelease
-      - name: Sign APK and preserve signing key
+
+      - name: Sign APK with preserved v1.1 key
         shell: bash
         run: |
           set -euo pipefail
           PASS='FCC-v1.1-2026-Private-Key'
-          keytool -genkeypair -v \
-            -keystore fitness-command-center-v1.1-signing.jks \
-            -storepass "$PASS" -keypass "$PASS" \
-            -alias fitnesscommandcenter \
-            -keyalg RSA -keysize 3072 -validity 10000 \
-            -dname 'CN=Fitness Command Center, O=Personal Fitness, C=US'
+          base64 -d fitness-signing-key.b64 > fitness-command-center-v1.1-signing.jks
+          keytool -list -v -keystore fitness-command-center-v1.1-signing.jks -storepass "$PASS" -alias fitnesscommandcenter | grep -E 'SHA256:|Owner:' | head
           BUILD_TOOLS="$ANDROID_HOME/build-tools/35.0.0"
           "$BUILD_TOOLS/zipalign" -p -f 4 \
             fitness-android/app/build/outputs/apk/release/app-release-unsigned.apk \
-            Fitness_Performance_Command_Center_v1.1.0-aligned.apk
+            Fitness_Performance_Command_Center_v1.1.1-aligned.apk
           "$BUILD_TOOLS/apksigner" sign \
             --ks fitness-command-center-v1.1-signing.jks \
             --ks-key-alias fitnesscommandcenter \
             --ks-pass "pass:$PASS" --key-pass "pass:$PASS" \
-            --out Fitness_Performance_Command_Center_v1.1.0.apk \
-            Fitness_Performance_Command_Center_v1.1.0-aligned.apk
-          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs Fitness_Performance_Command_Center_v1.1.0.apk | tee apk-verification.txt
-          cat > SIGNING_KEY_README.txt <<TXT
-          FITNESS COMMAND CENTER v1.1 SIGNING KEY
-          Keep this JKS file private. It is required to sign future updates of this v1.1 app package.
-          Alias: fitnesscommandcenter
-          Store/key password: $PASS
-          Package: com.david.fitnesscommandcenter.v2
-          TXT
+            --out Fitness_Performance_Command_Center_v1.1.1.apk \
+            Fitness_Performance_Command_Center_v1.1.1-aligned.apk
+          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs Fitness_Performance_Command_Center_v1.1.1.apk | tee apk-verification.txt
+
       - uses: actions/upload-artifact@v4
         with:
-          name: Fitness-Command-Center-v1.1.0
+          name: Fitness-Command-Center-v1.1.1
           path: |
-            Fitness_Performance_Command_Center_v1.1.0.apk
-            fitness-command-center-v1.1-signing.jks
-            SIGNING_KEY_README.txt
+            Fitness_Performance_Command_Center_v1.1.1.apk
             apk-verification.txt
           retention-days: 30
