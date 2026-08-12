@@ -1,0 +1,72 @@
+name: Build Fitness Command Center v1.1
+
+on:
+  push:
+    branches: [ fitness-command-center-v1-1-build ]
+    paths:
+      - 'fitness-android-source.zip'
+      - '.github/workflows/fitness-android-build.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK
+        run: yes | sdkmanager 'platforms;android-36' 'build-tools;35.0.0' || true
+      - name: Unpack source
+        run: |
+          rm -rf fitness-android
+          mkdir fitness-android
+          unzip -q fitness-android-source.zip -d fitness-android
+      - name: Build unsigned release
+        working-directory: fitness-android
+        run: gradle --no-daemon clean assembleRelease
+      - name: Sign APK and preserve signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          PASS='FCC-v1.1-2026-Private-Key'
+          keytool -genkeypair -v \
+            -keystore fitness-command-center-v1.1-signing.jks \
+            -storepass "$PASS" -keypass "$PASS" \
+            -alias fitnesscommandcenter \
+            -keyalg RSA -keysize 3072 -validity 10000 \
+            -dname 'CN=Fitness Command Center, O=Personal Fitness, C=US'
+          BUILD_TOOLS="$ANDROID_HOME/build-tools/35.0.0"
+          "$BUILD_TOOLS/zipalign" -p -f 4 \
+            fitness-android/app/build/outputs/apk/release/app-release-unsigned.apk \
+            Fitness_Performance_Command_Center_v1.1.0-aligned.apk
+          "$BUILD_TOOLS/apksigner" sign \
+            --ks fitness-command-center-v1.1-signing.jks \
+            --ks-key-alias fitnesscommandcenter \
+            --ks-pass "pass:$PASS" --key-pass "pass:$PASS" \
+            --out Fitness_Performance_Command_Center_v1.1.0.apk \
+            Fitness_Performance_Command_Center_v1.1.0-aligned.apk
+          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs Fitness_Performance_Command_Center_v1.1.0.apk | tee apk-verification.txt
+          cat > SIGNING_KEY_README.txt <<TXT
+          FITNESS COMMAND CENTER v1.1 SIGNING KEY
+          Keep this JKS file private. It is required to sign future updates of this v1.1 app package.
+          Alias: fitnesscommandcenter
+          Store/key password: $PASS
+          Package: com.david.fitnesscommandcenter.v2
+          TXT
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Fitness-Command-Center-v1.1.0
+          path: |
+            Fitness_Performance_Command_Center_v1.1.0.apk
+            fitness-command-center-v1.1-signing.jks
+            SIGNING_KEY_README.txt
+            apk-verification.txt
+          retention-days: 30
