@@ -1,4 +1,4 @@
-name: Build Fitness Command Center v1.1.2
+name: Build Fitness Command Center v1.1.3
 
 on:
   push:
@@ -7,6 +7,7 @@ on:
       - 'fitness-source-parts/**'
       - 'fitness-signing-key.b64'
       - 'release-v112/**'
+      - 'release-v113/**'
       - '.github/workflows/fitness-android-build.yml'
   workflow_dispatch:
 
@@ -27,7 +28,7 @@ jobs:
       - name: Install Android SDK
         run: yes | sdkmanager 'platforms;android-36' 'build-tools;35.0.0' || true
 
-      - name: Reconstruct source and apply v1.1.2 update
+      - name: Reconstruct source and apply v1.1.3 update
         shell: bash
         run: |
           set -euo pipefail
@@ -39,10 +40,14 @@ jobs:
           unzip -q fitness-android-source.zip -d fitness-android
           python3 release-v112/patch.py fitness-android
           cp release-v112/addon.js fitness-android/app/src/main/assets/addon.js
+          python3 release-v113/patch.py fitness-android
+          cp release-v113/reportaddon.js fitness-android/app/src/main/assets/reportaddon.js
           node --check fitness-android/app/src/main/assets/addon.js
+          node --check fitness-android/app/src/main/assets/reportaddon.js
           grep -n 'versionCode\|versionName' fitness-android/app/build.gradle
-          grep -n 'readHealthDate\|average_heart_rate_bpm' fitness-android/app/src/main/java/com/david/fitnesscommandcenter/v2/MainActivity.kt | head
-          grep -n 'Daily activity & progress\|oldWeeklyReport' fitness-android/app/src/main/assets/addon.js | head
+          grep -n 'generateReport\|period_report' fitness-android/app/src/main/java/com/david/fitnesscommandcenter/v2/MainActivity.kt | head
+          grep -n 'Gemini Report Center\|Automatic Gemini Reports' fitness-android/app/src/main/assets/reportaddon.js | head
+          grep -n 'reportaddon.js' fitness-android/app/src/main/assets/index.html
           grep -n 'android:icon\|android:roundIcon' fitness-android/app/src/main/AndroidManifest.xml
 
       - name: Build unsigned release
@@ -53,7 +58,7 @@ jobs:
         shell: bash
         run: |
           cd fitness-android
-          zip -qr ../Fitness_Command_Center_v1.1.2_Source.zip .
+          zip -qr ../Fitness_Command_Center_v1.1.3_Source.zip .
 
       - name: Sign APK with preserved v1.1 key
         shell: bash
@@ -65,20 +70,20 @@ jobs:
           BUILD_TOOLS="$ANDROID_HOME/build-tools/35.0.0"
           "$BUILD_TOOLS/zipalign" -p -f 4 \
             fitness-android/app/build/outputs/apk/release/app-release-unsigned.apk \
-            Fitness_Performance_Command_Center_v1.1.2-aligned.apk
+            Fitness_Performance_Command_Center_v1.1.3-aligned.apk
           "$BUILD_TOOLS/apksigner" sign \
             --ks fitness-command-center-v1.1-signing.jks \
             --ks-key-alias fitnesscommandcenter \
             --ks-pass "pass:$PASS" --key-pass "pass:$PASS" \
-            --out Fitness_Performance_Command_Center_v1.1.2.apk \
-            Fitness_Performance_Command_Center_v1.1.2-aligned.apk
-          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs Fitness_Performance_Command_Center_v1.1.2.apk | tee apk-verification.txt
+            --out Fitness_Performance_Command_Center_v1.1.3.apk \
+            Fitness_Performance_Command_Center_v1.1.3-aligned.apk
+          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs Fitness_Performance_Command_Center_v1.1.3.apk | tee apk-verification.txt
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Fitness-Command-Center-v1.1.2
+          name: Fitness-Command-Center-v1.1.3
           path: |
-            Fitness_Performance_Command_Center_v1.1.2.apk
-            Fitness_Command_Center_v1.1.2_Source.zip
+            Fitness_Performance_Command_Center_v1.1.3.apk
+            Fitness_Command_Center_v1.1.3_Source.zip
             apk-verification.txt
           retention-days: 30
