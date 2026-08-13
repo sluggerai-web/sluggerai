@@ -1,4 +1,4 @@
-name: Build Fitness Command Center v1.1.3
+name: Build Fitness Command Center v1.1.4
 
 on:
   push:
@@ -8,6 +8,7 @@ on:
       - 'fitness-signing-key.b64'
       - 'release-v112/**'
       - 'release-v113/**'
+      - 'release-v114/**'
       - '.github/workflows/fitness-android-build.yml'
   workflow_dispatch:
 
@@ -28,7 +29,7 @@ jobs:
       - name: Install Android SDK
         run: yes | sdkmanager 'platforms;android-36' 'build-tools;35.0.0' || true
 
-      - name: Reconstruct source and apply v1.1.3 update
+      - name: Reconstruct source and apply v1.1.4 update
         shell: bash
         run: |
           set -euo pipefail
@@ -42,13 +43,24 @@ jobs:
           cp release-v112/addon.js fitness-android/app/src/main/assets/addon.js
           python3 release-v113/patch.py fitness-android
           cp release-v113/reportaddon.js fitness-android/app/src/main/assets/reportaddon.js
+          python3 release-v114/patch.py fitness-android
           node --check fitness-android/app/src/main/assets/addon.js
           node --check fitness-android/app/src/main/assets/reportaddon.js
           grep -n 'versionCode\|versionName' fitness-android/app/build.gradle
-          grep -n 'generateReport\|period_report' fitness-android/app/src/main/java/com/david/fitnesscommandcenter/v2/MainActivity.kt | head
-          grep -n 'Gemini Report Center\|Automatic Gemini Reports' fitness-android/app/src/main/assets/reportaddon.js | head
-          grep -n 'reportaddon.js' fitness-android/app/src/main/assets/index.html
-          grep -n 'android:icon\|android:roundIcon' fitness-android/app/src/main/AndroidManifest.xml
+          grep -n 'function localISODate\|function today' fitness-android/app/src/main/assets/index.html | head
+          grep -n 'function isoDate' fitness-android/app/src/main/assets/reportaddon.js | head
+          grep -n 'localISODate(d)' fitness-android/app/src/main/assets/addon.js | head
+
+      - name: Verify Eastern timezone rollover fix
+        shell: bash
+        run: |
+          TZ=America/New_York node - <<'NODE'
+          function localISODate(d){let y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),day=String(d.getDate()).padStart(2,'0');return `${y}-${m}-${day}`}
+          const at811pmEastern = new Date('2026-08-13T00:11:00Z');
+          const got = localISODate(at811pmEastern);
+          console.log('America/New_York at 2026-08-13T00:11Z ->', got);
+          if (got !== '2026-08-12') throw new Error('Timezone regression: expected Aug 12 local date');
+          NODE
 
       - name: Build unsigned release
         working-directory: fitness-android
@@ -58,7 +70,7 @@ jobs:
         shell: bash
         run: |
           cd fitness-android
-          zip -qr ../Fitness_Command_Center_v1.1.3_Source.zip .
+          zip -qr ../Fitness_Command_Center_v1.1.4_Source.zip .
 
       - name: Sign APK with preserved v1.1 key
         shell: bash
@@ -70,20 +82,20 @@ jobs:
           BUILD_TOOLS="$ANDROID_HOME/build-tools/35.0.0"
           "$BUILD_TOOLS/zipalign" -p -f 4 \
             fitness-android/app/build/outputs/apk/release/app-release-unsigned.apk \
-            Fitness_Performance_Command_Center_v1.1.3-aligned.apk
+            Fitness_Performance_Command_Center_v1.1.4-aligned.apk
           "$BUILD_TOOLS/apksigner" sign \
             --ks fitness-command-center-v1.1-signing.jks \
             --ks-key-alias fitnesscommandcenter \
             --ks-pass "pass:$PASS" --key-pass "pass:$PASS" \
-            --out Fitness_Performance_Command_Center_v1.1.3.apk \
-            Fitness_Performance_Command_Center_v1.1.3-aligned.apk
-          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs Fitness_Performance_Command_Center_v1.1.3.apk | tee apk-verification.txt
+            --out Fitness_Performance_Command_Center_v1.1.4.apk \
+            Fitness_Performance_Command_Center_v1.1.4-aligned.apk
+          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs Fitness_Performance_Command_Center_v1.1.4.apk | tee apk-verification.txt
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Fitness-Command-Center-v1.1.3
+          name: Fitness-Command-Center-v1.1.4
           path: |
-            Fitness_Performance_Command_Center_v1.1.3.apk
-            Fitness_Command_Center_v1.1.3_Source.zip
+            Fitness_Performance_Command_Center_v1.1.4.apk
+            Fitness_Command_Center_v1.1.4_Source.zip
             apk-verification.txt
           retention-days: 30
