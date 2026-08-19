@@ -1,0 +1,69 @@
+from pathlib import Path
+import sys
+
+root=Path(sys.argv[1])
+
+# v1.1.6: Gemini report freshness + corrected/backfilled prior-day data awareness.
+p=root/'app/build.gradle'
+s=p.read_text()
+s=s.replace('versionCode 9','versionCode 10').replace("versionName '1.1.5'","versionName '1.1.6'")
+p.write_text(s)
+
+# Add timestamps to retroactive voice-created meal/hydration/recovery entries so future reports can identify backfills.
+p=root/'app/src/main/assets/addon.js'
+s=p.read_text()
+s=s.replace("source:'Gemini Voice',confidence:num(m.confidence)||num(x.confidence),note:m.notes||''}", "source:'Gemini Voice',confidence:num(m.confidence)||num(x.confidence),note:m.notes||'',loggedAt:new Date().toISOString()}")
+s=s.replace("source:'Voice'});", "source:'Voice',loggedAt:new Date().toISOString()});")
+s=s.replace("if(!existing)state.body.push(entry)}", "entry.editedAt=new Date().toISOString();if(!existing)state.body.push(entry)}")
+p.write_text(s)
+
+# Patch report add-on with source-data signatures, stale detection, and correction context.
+p=root/'app/src/main/assets/reportaddon.js'
+s=p.read_text()
+
+old="""  function latestReport(type,start,end){return (state.aiReports||[]).filter(r=>(!type||r.type===type)&&(!start||r.start===start)&&(!end||r.end===end)).sort((a,b)=>String(b.generatedAt).localeCompare(String(a.generatedAt)))[0]||null}\n  function reportExists(type,start,end){return !!latestReport(type,start,end)}\n"""
+new="""  function latestReport(type,start,end){return (state.aiReports||[]).filter(r=>(!type||r.type===type)&&(!start||r.start===start)&&(!end||r.end===end)).sort((a,b)=>String(b.generatedAt).localeCompare(String(a.generatedAt)))[0]||null}\n  function reportHashString(str){let h=2166136261;for(let i=0;i<str.length;i++){h^=str.charCodeAt(i);h=Math.imul(h,16777619)}return ('00000000'+(h>>>0).toString(16)).slice(-8)}\n  function reportPayloadSignature(payload){let x=JSON.parse(JSON.stringify(payload||{}));delete x.generated_for_date;delete x.data_change_context;return reportHashString(JSON.stringify(x))}\n  function currentReportSignature(type,start){try{return reportPayloadSignature(buildReportPayload(type,start))}catch(e){return ''}}\n  function reportIsFresh(type,start,end){let r=latestReport(type,start,end);if(!r||!r.sourceSignature)return false;return r.sourceSignature===currentReportSignature(type,start)}\n  function reportExists(type,start,end){return reportIsFresh(type,start,end)}\n  function retroactiveUpdates(start,end,since){\n    let changes=[],cut=since?new Date(since).getTime():0,seen=new Set();\n    function add(date,category,kind,when){if(!date||date<start||date>end)return;let t=when?new Date(when).getTime():0;if(cut&&t&&t<=cut)return;let k=[date,category,kind].join('|');if(seen.has(k))return;seen.add(k);changes.push({date,category,kind,changed_at:when||''})}\n    (state.meals||[]).forEach(x=>{if(x.editedAt)add(x.date,'nutrition','edited',x.editedAt);if(x.loggedAt&&x.date<localISODate(new Date(x.loggedAt)))add(x.date,'nutrition','backfilled',x.loggedAt)});\n    (state.workouts||[]).forEach(x=>{if(x.editedAt)add(x.date,'training','edited',x.editedAt);if(x.loggedAt&&x.date<localISODate(new Date(x.loggedAt)))add(x.date,'training','backfilled',x.loggedAt)});\n    (state.water||[]).forEach(x=>{let when=x.loggedAt||(String(x.time||'').includes('T')?x.time:'');if(when&&x.date<localISODate(new Date(when)))add(x.date,'hydration','backfilled',when)});\n    (state.body||[]).forEach(x=>{if(x.editedAt)add(x.date,'recovery','edited/backfilled',x.editedAt);if(x.loggedAt&&x.date<localISODate(new Date(x.loggedAt)))add(x.date,'recovery','backfilled',x.loggedAt)});\n    Object.keys(state.healthHistory||{}).forEach(date=>{let h=state.healthHistory[date]||{};if(h.synced_at&&date<localISODate(new Date(h.synced_at)))add(date,'health_connect','resynced/backfilled',h.synced_at)});\n    return changes.sort((a,b)=>String(a.date).localeCompare(String(b.date))).slice(0,40)\n  }\n"""
+if old not in s:
+    raise SystemExit('report helper patch point missing')
+s=s.replace(old,new)
+
+old="""  window.generateAiReport=function(kind,anchor=today(),auto=false){\n    if(!native()||!Android.generateReport)return toast('This app build does not have the Gemini report bridge.');\n    if(!Android.hasApiKey||!Android.hasApiKey())return toast('Add your Gemini API key in Settings first.');\n    if(window.pendingGeminiReport)return toast('A Gemini report is already being generated.');\n    let p=reportPeriod(kind,anchor),payload=buildReportPayload(kind,anchor);\n    window.pendingGeminiReport={type:p.kind,start:p.start,end:p.end,label:p.label,auto:!!auto,requestId:uid('RPT')};\n    let status=$('#reportStatus')||$('#dailyReportStatus');if(status)status.textContent='Gemini is reviewing meals, exercise, hydration, recovery and Health Connect data…';\n    Android.generateReport(JSON.stringify({request_id:window.pendingGeminiReport.requestId,report_type:p.kind,label:p.label,start_date:p.start,end_date:p.end,auto:!!auto,data:payload}));\n  };\n"""
+new="""  window.generateAiReport=function(kind,anchor=today(),auto=false){\n    if(!native()||!Android.generateReport)return toast('This app build does not have the Gemini report bridge.');\n    if(!Android.hasApiKey||!Android.hasApiKey())return toast('Add your Gemini API key in Settings first.');\n    if(window.pendingGeminiReport)return toast('A Gemini report is already being generated.');\n    let p=reportPeriod(kind,anchor),prev=previousPeriod(p),payload=buildReportPayload(kind,anchor),existing=latestReport(p.kind,p.start,p.end),sig=reportPayloadSignature(payload),retro=retroactiveUpdates(prev.start,p.end,existing&&existing.generatedAt);\n    let changed=!!(existing&&existing.sourceSignature&&existing.sourceSignature!==sig),legacy=!!(existing&&!existing.sourceSignature);\n    payload.data_change_context={previous_report_generated_at:existing?existing.generatedAt:null,previous_report_found:!!existing,source_data_changed_since_previous_report:changed,legacy_report_needs_refresh:legacy,retroactive_updates:retro,changed_dates:Array.from(new Set(retro.map(x=>x.date))),message:changed?'This report period or its comparison period has newer/corrected source data than the prior saved report. Recalculate every conclusion from the current payload and explicitly acknowledge the updated/backfilled data.':retro.length?'This report includes backfilled or edited prior-day entries. Mention that the analysis reflects those corrections.':legacy?'The prior saved report predates source-data freshness tracking. Rebuild it from the current payload; do not claim a specific correction unless the data shows one.':'No known retroactive corrections detected since the prior report.'};\n    window.pendingGeminiReport={type:p.kind,start:p.start,end:p.end,label:p.label,auto:!!auto,requestId:uid('RPT'),sourceSignature:sig,changeContext:payload.data_change_context};\n    let status=$('#reportStatus')||$('#dailyReportStatus');if(status)status.textContent=changed?'Data changed since the prior report. Gemini is rebuilding the report from the latest meals, exercise, hydration, recovery and Health Connect data…':'Gemini is reviewing meals, exercise, hydration, recovery and Health Connect data…';\n    Android.generateReport(JSON.stringify({request_id:window.pendingGeminiReport.requestId,report_type:p.kind,label:p.label,start_date:p.start,end_date:p.end,auto:!!auto,data:payload}));\n  };\n"""
+if old not in s:
+    raise SystemExit('generate report patch point missing')
+s=s.replace(old,new)
+
+old="""  window.reportCardHtml=function(r,compact=false){if(!r)return '<div class=\"small muted\">No Gemini report generated for this period yet.</div>';let preview=String(r.text||'').replace(/\\s+/g,' ').trim();let lim=compact?260:420;if(preview.length>lim)preview=preview.slice(0,lim)+'…';return `<div class=\"card mt\"><div class=\"between\"><div><b>${esc(r.label)}</b><div class=\"tiny muted\">Generated ${new Date(r.generatedAt).toLocaleString()}${r.auto?' • automatic':''}</div></div><span class=\"pill\">Gemini</span></div><div class=\"small mt\" style=\"white-space:pre-wrap\">${esc(preview)}</div><button class=\"btn sm light mt\" onclick=\"showAiReport('${r.id}')\">Open full report</button></div>`};\n"""
+new="""  window.reportCardHtml=function(r,compact=false){if(!r)return '<div class=\"small muted\">No Gemini report generated for this period yet.</div>';let preview=String(r.text||'').replace(/\\s+/g,' ').trim();let lim=compact?260:420;if(preview.length>lim)preview=preview.slice(0,lim)+'…';let fresh=reportIsFresh(r.type,r.start,r.end);return `<div class=\"card mt\"><div class=\"between\"><div><b>${esc(r.label)}</b><div class=\"tiny muted\">Generated ${new Date(r.generatedAt).toLocaleString()}${r.auto?' • automatic':''}${fresh?'':' • source data changed'}</div></div><span class=\"pill ${fresh?'green':'warn'}\">${fresh?'Current':'Needs update'}</span></div>${fresh?'':'<div class=\"notice mt\">Meals, workouts, hydration, recovery, goals, or Health Connect data changed after this report. Regenerate it to use the latest data.</div>'}<div class=\"small mt\" style=\"white-space:pre-wrap\">${esc(preview)}</div><button class=\"btn sm light mt\" onclick=\"showAiReport('${r.id}')\">Open full report</button></div>`};\n"""
+if old not in s:
+    raise SystemExit('report card patch point missing')
+s=s.replace(old,new)
+
+old="""      <div class=\"grid3 mt\"><div><div class=\"tiny muted\">Today</div><b>${latestReport('daily',daily.start,daily.end)?'Ready':'—'}</b></div><div><div class=\"tiny muted\">This week</div><b>${latestReport('weekly',week.start,week.end)?'Ready':'—'}</b></div><div><div class=\"tiny muted\">This month</div><b>${latestReport('monthly',month.start,month.end)?'Ready':'—'}</b></div></div>\n"""
+new="""      <div class=\"grid3 mt\"><div><div class=\"tiny muted\">Today</div><b>${reportIsFresh('daily',daily.start,daily.end)?'Current':latestReport('daily',daily.start,daily.end)?'Needs update':'—'}</b></div><div><div class=\"tiny muted\">This week</div><b>${reportIsFresh('weekly',week.start,week.end)?'Current':latestReport('weekly',week.start,week.end)?'Needs update':'—'}</b></div><div><div class=\"tiny muted\">This month</div><b>${reportIsFresh('monthly',month.start,month.end)?'Current':latestReport('monthly',month.start,month.end)?'Needs update':'—'}</b></div></div>\n"""
+if old not in s:
+    raise SystemExit('report center status patch point missing')
+s=s.replace(old,new)
+
+old="""  window.dailyReportHtml=function(date){let p=reportPeriod('daily',date),r=latestReport('daily',p.start,p.end);return `<div class=\"card mt\"><div class=\"between\"><div><b>Gemini Daily Report</b><div class=\"tiny muted\">Meals • exercise • water • HR/recovery • what went well • what to improve</div></div><span class=\"pill\">AI</span></div><button class=\"btn block gold mt\" onclick=\"generateAiReport('daily','${date}')\">${r?'Regenerate':'Generate'} report for this day</button><div id=\"dailyReportStatus\" class=\"small muted mt\"></div>${r?reportCardHtml(r,true):''}</div>`};\n"""
+new="""  window.dailyReportHtml=function(date){let p=reportPeriod('daily',date),r=latestReport('daily',p.start,p.end),fresh=reportIsFresh('daily',p.start,p.end);return `<div class=\"card mt\"><div class=\"between\"><div><b>Gemini Daily Report</b><div class=\"tiny muted\">Meals • exercise • water • HR/recovery • what went well • what to improve</div></div><span class=\"pill ${r&&!fresh?'warn':''}\">${r&&!fresh?'Update available':'AI'}</span></div><button class=\"btn block gold mt\" onclick=\"generateAiReport('daily','${date}')\">${r?(fresh?'Regenerate':'Update'):'Generate'} report for this day</button><div id=\"dailyReportStatus\" class=\"small muted mt\">${r&&!fresh?'Your logged data changed after this report. Update it to recalculate from the corrected entries.':''}</div>${r?reportCardHtml(r,true):''}</div>`};\n"""
+if old not in s:
+    raise SystemExit('daily report patch point missing')
+s=s.replace(old,new)
+
+old="""      let entry={id:uid('AIR'),type:r.report_type||p.type,start:r.start_date||p.start,end:r.end_date||p.end,label:r.label||p.label,generatedAt:new Date().toISOString(),auto:typeof r.auto==='boolean'?r.auto:p.auto,text:r.text||''};\n"""
+new="""      let entry={id:uid('AIR'),type:r.report_type||p.type,start:r.start_date||p.start,end:r.end_date||p.end,label:r.label||p.label,generatedAt:new Date().toISOString(),auto:typeof r.auto==='boolean'?r.auto:p.auto,text:r.text||'',sourceSignature:p.sourceSignature||'',changeContext:p.changeContext||null};\n"""
+if old not in s:
+    raise SystemExit('report result patch point missing')
+s=s.replace(old,new)
+p.write_text(s)
+
+# Make Gemini explicitly respect data-change context.
+p=root/'app/src/main/java/com/david/fitnesscommandcenter/v2/MainActivity.kt'
+s=p.read_text()
+needle='''              - Compare with goals and the previous comparable period when the data supports it.\n              - Mention meaningful consistency, personal bests, training volume and adherence when present.\n'''
+replacement='''              - Compare with goals and the previous comparable period when the data supports it.\n              - Inspect data_change_context when present. If it says source data changed or contains retroactive_updates, explicitly state near the beginning that this regenerated report reflects corrected/backfilled prior-day data, identify the affected dates/categories when provided, and base every conclusion on the CURRENT payload rather than an older report.\n              - Recalculate all averages, totals, goal comparisons, trends, and recommendations from the current supplied data; never carry forward a conclusion merely because a previous report existed.\n              - Mention meaningful consistency, personal bests, training volume and adherence when present.\n'''
+if needle not in s:
+    raise SystemExit('Gemini prompt patch point missing')
+s=s.replace(needle,replacement)
+p.write_text(s)
