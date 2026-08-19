@@ -1,4 +1,4 @@
-name: Build Fitness Command Center v1.1.5
+name: Build Fitness Command Center v1.1.6
 
 permissions:
   contents: write
@@ -13,6 +13,7 @@ on:
       - 'release-v113/**'
       - 'release-v114/**'
       - 'release-v115/**'
+      - 'release-v116/**'
       - '.github/workflows/fitness-android-build.yml'
   workflow_dispatch:
 
@@ -33,7 +34,7 @@ jobs:
       - name: Install Android SDK
         run: yes | sdkmanager 'platforms;android-36' 'build-tools;35.0.0' || true
 
-      - name: Reconstruct source and apply v1.1.5 update
+      - name: Reconstruct source and apply v1.1.6 update
         shell: bash
         run: |
           set -euo pipefail
@@ -50,12 +51,13 @@ jobs:
           python3 release-v114/patch.py fitness-android
           python3 release-v115/patch.py fitness-android
           cp release-v115/historyaddon.js fitness-android/app/src/main/assets/historyaddon.js
+          python3 release-v116/patch.py fitness-android
           node --check fitness-android/app/src/main/assets/addon.js
           node --check fitness-android/app/src/main/assets/reportaddon.js
           node --check fitness-android/app/src/main/assets/historyaddon.js
           grep -n 'versionCode\|versionName' fitness-android/app/build.gradle
-          grep -n 'historyaddon.js' fitness-android/app/src/main/assets/index.html
-          grep -n 'openFoodForDate\|openTrainingForDate\|editMeal\|editWorkout' fitness-android/app/src/main/assets/historyaddon.js | head
+          grep -n 'reportPayloadSignature\|reportIsFresh\|data_change_context\|Needs update' fitness-android/app/src/main/assets/reportaddon.js | head -20
+          grep -n 'data_change_context' fitness-android/app/src/main/java/com/david/fitnesscommandcenter/v2/MainActivity.kt
 
       - name: Verify Eastern timezone rollover fix
         shell: bash
@@ -80,6 +82,9 @@ jobs:
           console.log('Historical meal/workout controls present');
           NODE
 
+      - name: Verify Gemini report freshness
+        run: node release-v116/test-report-freshness.js
+
       - name: Build unsigned release
         working-directory: fitness-android
         run: gradle --no-daemon clean assembleRelease
@@ -88,7 +93,7 @@ jobs:
         shell: bash
         run: |
           cd fitness-android
-          zip -qr ../Fitness_Command_Center_v1.1.5_Source.zip .
+          zip -qr ../Fitness_Command_Center_v1.1.6_Source.zip .
 
       - name: Sign APK with preserved v1.1 key
         shell: bash
@@ -100,38 +105,38 @@ jobs:
           BUILD_TOOLS="$ANDROID_HOME/build-tools/35.0.0"
           "$BUILD_TOOLS/zipalign" -p -f 4 \
             fitness-android/app/build/outputs/apk/release/app-release-unsigned.apk \
-            Fitness_Performance_Command_Center_v1.1.5-aligned.apk
+            Fitness_Performance_Command_Center_v1.1.6-aligned.apk
           "$BUILD_TOOLS/apksigner" sign \
             --ks fitness-command-center-v1.1-signing.jks \
             --ks-key-alias fitnesscommandcenter \
             --ks-pass "pass:$PASS" --key-pass "pass:$PASS" \
-            --out Fitness_Performance_Command_Center_v1.1.5.apk \
-            Fitness_Performance_Command_Center_v1.1.5-aligned.apk
-          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs Fitness_Performance_Command_Center_v1.1.5.apk | tee apk-verification.txt
+            --out Fitness_Performance_Command_Center_v1.1.6.apk \
+            Fitness_Performance_Command_Center_v1.1.6-aligned.apk
+          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs Fitness_Performance_Command_Center_v1.1.6.apk | tee apk-verification.txt
 
       - name: Publish signed build to branch
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p release-v115-built
-          cp Fitness_Performance_Command_Center_v1.1.5.apk release-v115-built/
-          cp Fitness_Command_Center_v1.1.5_Source.zip release-v115-built/
-          cp apk-verification.txt release-v115-built/
+          mkdir -p release-v116-built
+          cp Fitness_Performance_Command_Center_v1.1.6.apk release-v116-built/
+          cp Fitness_Command_Center_v1.1.6_Source.zip release-v116-built/
+          cp apk-verification.txt release-v116-built/
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add release-v115-built
+          git add release-v116-built
           if git diff --cached --quiet; then
             echo 'Published files already current.'
           else
-            git commit -m 'Publish Fitness Command Center v1.1.5 build artifacts'
+            git commit -m 'Publish Fitness Command Center v1.1.6 build artifacts'
             git push origin HEAD:fitness-command-center-v1-1-build
           fi
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Fitness-Command-Center-v1.1.5
+          name: Fitness-Command-Center-v1.1.6
           path: |
-            Fitness_Performance_Command_Center_v1.1.5.apk
-            Fitness_Command_Center_v1.1.5_Source.zip
+            Fitness_Performance_Command_Center_v1.1.6.apk
+            Fitness_Command_Center_v1.1.6_Source.zip
             apk-verification.txt
           retention-days: 30
