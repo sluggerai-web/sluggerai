@@ -1,0 +1,17 @@
+Verifies
+Verified using v1 scheme (JAR signing): false
+Verified using v2 scheme (APK Signature Scheme v2): false
+Verified using v3 scheme (APK Signature Scheme v3): true
+Verified using v3.1 scheme (APK Signature Scheme v3.1): false
+Verified using v4 scheme (APK Signature Scheme v4): false
+Verified for SourceStamp: false
+Number of signers: 1
+Signer #1 certificate DN: CN=Fitness Command Center, O=Personal Fitness, C=US
+Signer #1 certificate SHA-256 digest: d98c2785a438cbbf96896e4642a6fe62fefcb429f8976e9d7c59285a01af4b38
+Signer #1 certificate SHA-1 digest: 767c216db84572d21b3b4e7ac5c6a6884b36bd7e
+Signer #1 certificate MD5 digest: 3986836d0a228fa1793ee61aec376168
+Signer #1 key algorithm: RSA
+Signer #1 key size (bits): 3072
+Signer #1 public key SHA-256 digest: c467fb371c80000152eb05510994394f1bb1fe4bc32d429c797e3c9b1cd83371
+Signer #1 public key SHA-1 digest: 91dfd458dbb5d6934665d9d0a2b83e6f60e20729
+Signer #1 public key MD5 digest: 9b725bfc45aa5772323474dcb006f555
