@@ -1,4 +1,4 @@
-name: Build Fitness Command Center v1.1.4
+name: Build Fitness Command Center v1.1.5
 
 on:
   push:
@@ -9,6 +9,7 @@ on:
       - 'release-v112/**'
       - 'release-v113/**'
       - 'release-v114/**'
+      - 'release-v115/**'
       - '.github/workflows/fitness-android-build.yml'
   workflow_dispatch:
 
@@ -29,7 +30,7 @@ jobs:
       - name: Install Android SDK
         run: yes | sdkmanager 'platforms;android-36' 'build-tools;35.0.0' || true
 
-      - name: Reconstruct source and apply v1.1.4 update
+      - name: Reconstruct source and apply v1.1.5 update
         shell: bash
         run: |
           set -euo pipefail
@@ -44,12 +45,14 @@ jobs:
           python3 release-v113/patch.py fitness-android
           cp release-v113/reportaddon.js fitness-android/app/src/main/assets/reportaddon.js
           python3 release-v114/patch.py fitness-android
+          python3 release-v115/patch.py fitness-android
+          cp release-v115/historyaddon.js fitness-android/app/src/main/assets/historyaddon.js
           node --check fitness-android/app/src/main/assets/addon.js
           node --check fitness-android/app/src/main/assets/reportaddon.js
+          node --check fitness-android/app/src/main/assets/historyaddon.js
           grep -n 'versionCode\|versionName' fitness-android/app/build.gradle
-          grep -n 'function localISODate\|function today' fitness-android/app/src/main/assets/index.html | head
-          grep -n 'function isoDate' fitness-android/app/src/main/assets/reportaddon.js | head
-          grep -n 'localISODate(d)' fitness-android/app/src/main/assets/addon.js | head
+          grep -n 'historyaddon.js' fitness-android/app/src/main/assets/index.html
+          grep -n 'openFoodForDate\|openTrainingForDate\|editMeal\|editWorkout' fitness-android/app/src/main/assets/historyaddon.js | head
 
       - name: Verify Eastern timezone rollover fix
         shell: bash
@@ -62,6 +65,18 @@ jobs:
           if (got !== '2026-08-12') throw new Error('Timezone regression: expected Aug 12 local date');
           NODE
 
+      - name: Verify historical date controls
+        shell: bash
+        run: |
+          node - <<'NODE'
+          const fs=require('fs');
+          const s=fs.readFileSync('fitness-android/app/src/main/assets/historyaddon.js','utf8');
+          const required=['validEntryDate','setEntryDate','saveManualMeal','saveManualWorkout','editMeal','editWorkout','deleteMeal','deleteWorkout','startVoiceForDate'];
+          for (const n of required) if (!s.includes(n)) throw new Error('Missing historical-edit function: '+n);
+          if (!s.includes('max="${today()}"')) throw new Error('Historical date inputs do not block future dates');
+          console.log('Historical meal/workout controls present');
+          NODE
+
       - name: Build unsigned release
         working-directory: fitness-android
         run: gradle --no-daemon clean assembleRelease
@@ -70,7 +85,7 @@ jobs:
         shell: bash
         run: |
           cd fitness-android
-          zip -qr ../Fitness_Command_Center_v1.1.4_Source.zip .
+          zip -qr ../Fitness_Command_Center_v1.1.5_Source.zip .
 
       - name: Sign APK with preserved v1.1 key
         shell: bash
@@ -82,20 +97,20 @@ jobs:
           BUILD_TOOLS="$ANDROID_HOME/build-tools/35.0.0"
           "$BUILD_TOOLS/zipalign" -p -f 4 \
             fitness-android/app/build/outputs/apk/release/app-release-unsigned.apk \
-            Fitness_Performance_Command_Center_v1.1.4-aligned.apk
+            Fitness_Performance_Command_Center_v1.1.5-aligned.apk
           "$BUILD_TOOLS/apksigner" sign \
             --ks fitness-command-center-v1.1-signing.jks \
             --ks-key-alias fitnesscommandcenter \
             --ks-pass "pass:$PASS" --key-pass "pass:$PASS" \
-            --out Fitness_Performance_Command_Center_v1.1.4.apk \
-            Fitness_Performance_Command_Center_v1.1.4-aligned.apk
-          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs Fitness_Performance_Command_Center_v1.1.4.apk | tee apk-verification.txt
+            --out Fitness_Performance_Command_Center_v1.1.5.apk \
+            Fitness_Performance_Command_Center_v1.1.5-aligned.apk
+          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs Fitness_Performance_Command_Center_v1.1.5.apk | tee apk-verification.txt
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Fitness-Command-Center-v1.1.4
+          name: Fitness-Command-Center-v1.1.5
           path: |
-            Fitness_Performance_Command_Center_v1.1.4.apk
-            Fitness_Command_Center_v1.1.4_Source.zip
+            Fitness_Performance_Command_Center_v1.1.5.apk
+            Fitness_Command_Center_v1.1.5_Source.zip
             apk-verification.txt
           retention-days: 30
